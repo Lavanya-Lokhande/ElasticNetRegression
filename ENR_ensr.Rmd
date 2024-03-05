@@ -1,0 +1,198 @@
+---
+title: "New ENR"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+https://cran.r-project.org/web/packages/ensr/vignettes/ensr-examples.html
+
+```{r}
+library(tidyverse)
+library(caret)
+library(glmnet)
+library(vip)
+library(recipes) 
+library(dplyr)
+library(ggplot2)
+library(ensr)
+library(data.table)
+library(ggforce)
+library(doMC)
+```
+
+```{r}
+registerDoMC(cores = max(c(detectCores() - 2L, 1L)))
+options(datatable.print.topn  = 3L,
+        datatable.print.nrows = 3L)
+```
+
+```{r}
+datafile <- 'Input_file_Lasso_DLBCL R+.csv'
+
+data<-read.table(datafile, header=T, sep=",", dec=".", na.strings = "NA")
+data2 <- data[,-(1:2)]
+```
+
+```{r}
+
+# Split the data into training and test set
+#set.seed(446098)
+set.seed(123)
+training.samples <- 
+  createDataPartition(data2$Stime1, p = 0.70, list = FALSE)
+train.data  <- data2[training.samples, ]
+test.data <- data2[-training.samples, ]
+```
+
+```{r}
+#set.seed(446098)
+set.seed(123)
+y_matrix <- as.matrix(train.data$Stime1)
+x_matrix <- as.matrix(train.data[,-1])
+
+```
+
+
+```{r}
+# Predictor variables
+x <- model.matrix(Stime1~., train.data)[,-1]
+# Outcome variable
+y <- train.data$Stime1
+```
+
+```{r}
+ensr_obj <- ensr(y = y_matrix, x = x_matrix, standardize = FALSE)
+ensr_obj
+```
+
+```{r}
+ensr_obj_summary <- summary(object = ensr_obj)
+ensr_obj_summary
+```
+```{r}
+ensr_obj_summary[cvm == min(cvm)]
+```
+
+
+```{r}
+str(preferable(ensr_obj), max.level = 1L)
+```
+```{r}
+par(mfrow = c(1, 3))
+plot(preferable(ensr_obj), xvar = "norm")
+plot(preferable(ensr_obj), xvar = "lambda")
+plot(preferable(ensr_obj), xvar = "dev")
+
+```
+
+```{r}
+plot(ensr_obj)
+```
+
+```{r}
+#plot(ensr_obj) +
+ # theme_minimal() +
+ # facet_zoom(x = 0.4 < alpha & alpha < 0.6, y = 1e+03< lambda & lambda < 1e+02)
+```
+```{r}
+summary(ensr_obj)[cvm == min(cvm)]
+```
+
+
+```{r}
+plot(ensr_obj, type = 2)
+```
+
+```{r}
+alpha = 0.2777778
+lambda = 106.711	
+lasso.mod <- glmnet(x, y, alpha = alpha, lambda = lambda)
+```
+```{r}
+myCoefs <- coef(lasso.mod)
+myCoefs[which(myCoefs != 0 ) ] 
+myCoefs@Dimnames[[1]][which(myCoefs != 0 ) ]
+myResults <- data.frame(
+  features = myCoefs@Dimnames[[1]][ which(myCoefs != 0 ) ], #intercept included
+  coefs    = myCoefs              [ which(myCoefs != 0 ) ]  #intercept included
+)
+```
+
+
+```{r}
+# Make predictions on the test data
+x.test <- model.matrix(Stime1 ~., test.data)[,-1]
+predictions <- lasso.mod %>% predict(x.test) %>% as.vector()
+# Model performance metrics
+error <- data.frame(RMSE = RMSE(predictions, test.data$Stime1), Rsquare = R2(predictions, test.data$Stime1))
+```
+
+```{r}
+myResults
+error
+```
+```{r}
+len<-nrow(myResults)
+len=len-1
+
+```
+
+```{r}
+set.seed(123)
+## cross validation ans hypertuning
+#set.seed(446098)
+# grid search across 
+cv_glmnet <- train(
+  x = x,
+  y = y,
+  method = "glmnet",
+  preProc = c("zv", "center", "scale"),
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10
+)
+
+cv_glmnet$results %>%
+  filter(alpha == alpha, lambda == lambda)
+
+ggplot(cv_glmnet)
+```
+
+```{r}
+pred <- predict(cv_glmnet, x)
+
+# compute RMSE of transformed predicted
+RMSE(pred, y)
+```
+
+```{r}
+vip(cv_glmnet, num_features = len, geom = "point")
+```
+
+```{r}
+df2<- myResults[-c(1),]
+
+```
+
+```{r}
+theme_set(theme_grey())
+#df2$features <- rownames(df2) 
+df2$type <- ifelse(df2$coefs < 0, "Negative", "Positive")
+
+df2 <- df2[order(df2$coefs), ] #Ascending sort on Z Score
+df2$features <- factor(df2$features, levels = df2$features)
+
+ggplot(df2, aes(x=features, y=coefs)) +
+  geom_bar(stat='identity', aes(fill=type), width=.5) +
+  scale_fill_manual(values=c("#006666","#076089")) +
+  #scale_fill_viridis_d() +
+  labs( title= "ENN Coefficients", x = "Features", y="Coefficients") +
+  coord_flip()
+
+```
+
+

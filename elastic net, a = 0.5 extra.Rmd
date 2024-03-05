@@ -1,0 +1,181 @@
+---
+title: "Elastic net a = 0.5"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(tidyverse)
+library(caret)
+library(glmnet)
+library(vip)
+library(recipes) 
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+datafile <- 'Input_file_Lasso_DLBCL R+.csv'
+
+data<-read.table(datafile, header=T, sep=",", dec=".", na.strings = "NA")
+data2 <- data[,-(1:2)]
+```
+
+
+```{r}
+# Split the data into training and test set
+set.seed(446098)
+
+training.samples <- 
+  createDataPartition(data2$Stime1, p = 0.70, list = FALSE)
+train.data  <- data2[training.samples, ]
+test.data <- data2[-training.samples, ]
+```
+
+```{r}
+# Predictor variables
+x <- model.matrix(Stime1~., train.data)[,-1]
+# Outcome variable
+y <- train.data$Stime1
+```
+
+```{r}
+set.seed(446098)
+#set.seed(123)
+model <- train(
+  Stime1 ~., data = train.data, method = "glmnet",
+  trControl = trainControl("cv", number = 10),
+  tuneLength = 10
+)
+# Best tuning parameter
+model$bestTune
+```
+
+```{r}
+#glmnet(x, y, alpha = 0.5, lambda = NULL)
+```
+
+```{r}
+glmnet(x, y, alpha = 1, lambda = 34.39971)
+```
+
+```{r}
+# Find the best lambda using cross-validation
+#set.seed(123) 
+#set.seed(446098)
+#cv <- cv.glmnet(x, y, alpha = 1)
+# Display the best lambda value
+#lambda <- cv$lambda.min
+#lambda
+```
+
+```{r}
+plot(cv)
+```
+
+```{r}
+lasso.mod <- glmnet(x, y, alpha = 1)
+plot(lasso.mod, xvar = "lambda")
+
+```
+```{r}
+lasso.mod <- glmnet(x, y, alpha = 1, lambda = 34.39971)
+```
+
+
+```{r}
+
+myCoefs <- coef(model$finalModel, model$bestTune$lambda)
+myCoefs[which(myCoefs != 0 ) ] 
+myCoefs@Dimnames[[1]][which(myCoefs != 0 ) ]
+myResults <- data.frame(
+  features = myCoefs@Dimnames[[1]][ which(myCoefs != 0 ) ], #intercept included
+  coefs    = myCoefs              [ which(myCoefs != 0 ) ]  #intercept included
+)
+length(myCoefs@Dimnames[[1]][ which(myCoefs != 0 ) ])
+```
+
+
+```{r}
+# Make predictions on the test data
+x.test <- model.matrix(Stime1 ~., test.data)[,-1]
+predictions <- lasso.mod %>% predict(x.test) %>% as.vector()
+# Model performance metrics
+error <- data.frame(RMSE = RMSE(predictions, test.data$Stime1), Rsquare = R2(predictions, test.data$Stime1))
+```
+
+```{r}
+myResults
+error
+```
+
+```{r}
+set.seed(123)
+#set.seed(446098)
+# grid search across 
+cv_glmnet <- train(
+  x = x,
+  y = y,
+  method = "glmnet",
+  preProc = c("zv", "center", "scale"),
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10
+)
+
+# model with lowest RMSE
+cv_glmnet$bestTune
+##   alpha     lambda
+## 7   0.1 0.02007035
+
+# results for model with lowest RMSE
+cv_glmnet$results %>%
+  filter(alpha == cv_glmnet$bestTune$alpha, lambda == cv_glmnet$bestTune$lambda)
+##   alpha     lambda      RMSE  Rsquared        MAE     RMSESD RsquaredSD
+## 1   0.1 0.02007035 0.1277585 0.9001487 0.08102427 0.02235901  0.0346677
+##         MAESD
+## 1 0.005667366
+
+# plot cross-validated RMSE
+ggplot(cv_glmnet)
+```
+
+```{r}
+pred <- predict(cv_glmnet, x)
+
+# compute RMSE of transformed predicted
+RMSE(pred, y)
+```
+
+```{r}
+vip(cv_glmnet, num_features = 20, geom = "point")
+```
+
+```{r}
+df2<- myResults[-c(1),]
+
+```
+
+```{r}
+theme_set(theme_grey())
+#df2$features <- rownames(df2) 
+df2$type <- ifelse(df2$coefs < 0, "Negative", "Positive")
+
+df2 <- df2[order(df2$coefs), ] #Ascending sort on Z Score
+df2$features <- factor(df2$features, levels = df2$features)
+
+ggplot(df2, aes(x=features, y=coefs)) +
+  geom_bar(stat='identity', aes(fill=type), width=.5) +
+  scale_fill_manual(values=c("#006666","#076089")) +
+  #scale_fill_viridis_d() +
+  labs( title= "ENN Coefficients", x = "Features", y="Coefficients") +
+  coord_flip()
+
+```
+
